@@ -1,0 +1,7 @@
+{
+  "name": "DoodleVid AI - Free Script to Whiteboard Video",
+  "description": "Create whiteboard-style videos with a free-first pipeline: script drafting, narration upload/record, storyboard generation, open image generation, and browser export.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
