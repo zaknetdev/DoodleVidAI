@@ -5,6 +5,7 @@ DoodleVid AI creates whiteboard-style videos from a topic in one pipeline:
 1. Generate/edit script.
 2. Add narration (record/upload in **free mode**, or auto-generate with Gemini mode).
 3. Build storyboard scenes and visuals.
+3. Build storyboard scenes and AI visuals.
 4. Export final `.webm` with background music.
 
 ## Modes
@@ -13,6 +14,7 @@ DoodleVid AI creates whiteboard-style videos from a topic in one pipeline:
   - Script: local structured generator (no API key)
   - Scene analysis: local sentence segmentation
   - Visuals: local SVG whiteboard scene generation (fast + CORS-safe)
+  - Images: open no-key endpoint (`image.pollinations.ai`)
   - Voice: your uploaded/recorded narration
 - **Gemini mode (optional):**
   - Better script/scene quality and auto TTS using Gemini API key
@@ -49,3 +51,4 @@ This repo includes a GitHub Actions workflow at `.github/workflows/deploy-pages.
 3. Push to `main` (or run workflow manually).
 4. Your app will be available at:
    - `https://<your-github-username>.github.io/<repo-name>/`
+
