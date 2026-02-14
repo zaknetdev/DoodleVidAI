@@ -50,6 +50,11 @@ const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const voiceSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const musicSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
+  const handImageRef = useRef<HTMLImageElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
   const handImageRef = useRef<HTMLImageElement | null>(null);
 
@@ -58,6 +63,12 @@ const App: React.FC = () => {
     hand.crossOrigin = 'anonymous';
     hand.src = 'https://i.ibb.co/L5w2RST/sketch-hand.png';
     hand.onload = () => (handImageRef.current = hand);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
+    };
   }, []);
 
   const activeScene = useMemo(() => {
@@ -83,11 +94,20 @@ const App: React.FC = () => {
     }
   };
 
+  const applyAudioUrl = (url: string, file: File | null) => {
+    if (!audioRef.current) return;
+    if (audioObjectUrlRef.current?.startsWith('blob:')) URL.revokeObjectURL(audioObjectUrlRef.current);
+    audioObjectUrlRef.current = url;
   const handleNarrationUpload = (file: File | null) => {
     if (!file || !audioRef.current) return;
     const url = URL.createObjectURL(file);
     audioRef.current.src = url;
     setState((s) => ({ ...s, audioFile: file }));
+  };
+
+  const handleNarrationUpload = (file: File | null) => {
+    if (!file) return;
+    applyAudioUrl(URL.createObjectURL(file), file);
   };
 
   const handleRecordNarration = async () => {
@@ -106,6 +126,7 @@ const App: React.FC = () => {
         stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(chunks, { type: 'audio/webm' });
         const file = new File([blob], `narration-${Date.now()}.webm`, { type: 'audio/webm' });
+        applyAudioUrl(URL.createObjectURL(file), file);
         handleNarrationUpload(file);
       };
       recorderRef.current = mediaRecorder;
@@ -151,6 +172,12 @@ const App: React.FC = () => {
     writeString(36, 'data');
     view.setUint32(40, bytes.length, true);
     new Uint8Array(buffer, 44).set(bytes);
+    const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+    applyAudioUrl(url, null);
+  };
+
+  const handleStartProduction = async () => {
+    setState((s) => ({ ...s, appStage: 'production', isProcessing: true, steps: INITIAL_STEPS, scenes: [], progress: 0 }));
     if (audioRef.current) {
       audioRef.current.src = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
     }
@@ -172,6 +199,8 @@ const App: React.FC = () => {
       updateStep('visuals', 'loading');
       const finalScenes = [...scenes];
       let done = 0;
+
+      const loadScene = async (scene: typeof scenes[number]) => {
       for (const scene of scenes) {
         const url = await generateImageForScene(scene.prompt, undefined, scene.style);
         const image = new Image();
@@ -186,6 +215,10 @@ const App: React.FC = () => {
         finalScenes[idx] = { ...scene, assetUrl: url };
         done += 1;
         setState((s) => ({ ...s, progress: Math.round((done / scenes.length) * 100) }));
+      };
+
+      for (let i = 0; i < scenes.length; i += 4) {
+        await Promise.all(scenes.slice(i, i + 4).map(loadScene));
       }
 
       setState((s) => ({ ...s, scenes: finalScenes, isProcessing: false, message: 'Production ready.' }));
@@ -237,10 +270,72 @@ const App: React.FC = () => {
     render();
   }, [activeScene, currentTime, isPlaying, state.isRendering]);
 
+  const ensureAudioGraph = (context: AudioContext) => {
+    if (!audioRef.current || !musicRef.current) return null;
+
+    if (!voiceSourceRef.current) voiceSourceRef.current = context.createMediaElementSource(audioRef.current);
+    if (!musicSourceRef.current) musicSourceRef.current = context.createMediaElementSource(musicRef.current);
+
+    return { voiceSource: voiceSourceRef.current, musicSource: musicSourceRef.current };
+  };
+
   const handleExport = async () => {
     if (!canvasRef.current || !audioRef.current || !musicRef.current) return;
     setState((s) => ({ ...s, isRendering: true }));
 
+    try {
+      if (!audioContextRef.current) audioContextRef.current = new AudioContext();
+      const context = audioContextRef.current;
+      if (context.state === 'suspended') await context.resume();
+
+      const graph = ensureAudioGraph(context);
+      if (!graph) throw new Error('Audio graph initialization failed.');
+
+      const destination = context.createMediaStreamDestination();
+      const voiceGain = context.createGain();
+      voiceGain.gain.value = 1;
+      graph.voiceSource.connect(voiceGain).connect(destination);
+
+      const musicGain = context.createGain();
+      musicGain.gain.value = 0.14;
+      graph.musicSource.connect(musicGain).connect(destination);
+
+      const stream = new MediaStream([...canvasRef.current.captureStream(60).getTracks(), ...destination.stream.getTracks()]);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
+      const chunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `doodlevid-master-${Date.now()}.webm`;
+        a.click();
+        stream.getTracks().forEach((t) => t.stop());
+        setState((s) => ({ ...s, isRendering: false }));
+      };
+
+      audioRef.current.currentTime = 0;
+      musicRef.current.currentTime = 0;
+      setCurrentTime(0);
+      setIsPlaying(true);
+      mediaRecorder.start();
+      await Promise.all([audioRef.current.play(), musicRef.current.play()]);
+
+      const timer = setInterval(() => {
+        if (audioRef.current?.ended) {
+          clearInterval(timer);
+          mediaRecorder.stop();
+          setIsPlaying(false);
+        }
+        if (audioRef.current?.duration) {
+          setState((s) => ({ ...s, renderProgress: Math.round((audioRef.current!.currentTime / audioRef.current!.duration) * 100) }));
+        }
+      }, 200);
+    } catch (error) {
+      console.error(error);
+      setState((s) => ({ ...s, isRendering: false, message: 'Export failed. Try again after pressing play once.' }));
+    }
     if (!audioContextRef.current) audioContextRef.current = new AudioContext();
     const context = audioContextRef.current;
     if (context.state === 'suspended') await context.resume();
@@ -322,6 +417,7 @@ const App: React.FC = () => {
             </div>
 
             <button onClick={handleStartProduction} disabled={!state.scriptText || state.isProcessing} className="w-full rounded-xl p-3 bg-emerald-600 font-bold disabled:opacity-40">Build video assets</button>
+            <p className="text-xs text-amber-300">Free mode is fully no-key: local script/scene generation, local SVG whiteboard visuals, and your narration upload/record.</p>
             <p className="text-xs text-amber-300">Free mode uses open image generation + local scene planning. For auto TTS/script quality boost, switch to Gemini mode and add API key.</p>
             <p className="text-xs text-slate-400">{state.message}</p>
           </section>
@@ -349,6 +445,11 @@ const App: React.FC = () => {
                   <ArrowDownTrayIcon className="w-5 h-5" /> {state.isRendering ? `Encoding ${state.renderProgress}%` : 'Export webm'}
                 </button>
               </div>
+              {state.isProcessing && (
+                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div className="h-full bg-teal-500 transition-all" style={{ width: `${state.progress}%` }} />
+                </div>
+              )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 {state.steps.map((step) => (
                   <div key={step.id} className="rounded-xl border border-white/10 p-3 text-xs flex items-center gap-2">
