@@ -1,30 +1,29 @@
-# DoodleVid AI (Topic/Script → Full Whiteboard Video)
+# DoodleVid AI (Free-first Script → Whiteboard Video)
 
-DoodleVid AI can now generate a full video pipeline:
+DoodleVid AI creates whiteboard-style videos from a topic in one pipeline:
 
-1. Topic → script generation
-2. Voiceover (Google TTS auto-generation in Gemini mode **or** your own uploaded/recorded MP3/WAV)
-3. Scene planning + background visuals
-4. Export final `.webm` video
-
-## Google integrations
-
-- **Voiceover:** Google Gemini TTS (`gemini-2.5-flash-preview-tts`)
-- **Image scenes:** Google Gemini image generation (`gemini-2.0-flash-preview-image-generation`)
-- **Script + scene analysis:** Google Gemini text generation
-
-> Note: Google Whisk is great as a UI tool, but it does not currently provide a stable public API for direct programmatic integration in this app. This project uses Google Gemini APIs as the programmable equivalent.
+1. Generate/edit script.
+2. Add narration (record/upload in **free mode**, or auto-generate with Gemini mode).
+3. Build storyboard scenes and visuals.
+3. Build storyboard scenes and AI visuals.
+4. Export final `.webm` with background music.
 
 ## Modes
 
-- **Gemini mode (recommended):** one-click script + AI voice + AI visuals
-- **Free mode:** local script/scene fallback + local SVG visuals + your own narration file/recording
+- **Free mode (default):**
+  - Script: local structured generator (no API key)
+  - Scene analysis: local sentence segmentation
+  - Visuals: local SVG whiteboard scene generation (fast + CORS-safe)
+  - Images: open no-key endpoint (`image.pollinations.ai`)
+  - Voice: your uploaded/recorded narration
+- **Gemini mode (optional):**
+  - Better script/scene quality and auto TTS using Gemini API key
 
-## Progress / UX
+## Performance and reliability improvements
 
-- Live percent progress
-- Elapsed time and ETA during asset build
-- Option to use your own uploaded voiceover file if you don’t want auto-generated voice
+- Scene rendering uses local data-URI SVG visuals to avoid third-party image outages.
+- Export path reuses the audio graph to avoid `createMediaElementSource` repeat errors.
+- Asset generation runs in small batches for faster production startup.
 
 ## Local development
 
@@ -43,10 +42,13 @@ Create `.env.local`:
 GEMINI_API_KEY=your_key_here
 ```
 
-## Deploy to GitHub Pages
+## Deploy to GitHub Pages (free)
+
+This repo includes a GitHub Actions workflow at `.github/workflows/deploy-pages.yml`.
 
 1. Push to your GitHub repository.
-2. In **Settings → Pages**, set source to **GitHub Actions**.
-3. Push to `main`.
-4. Open:
+2. In **Settings → Pages**, set **Build and deployment** to **GitHub Actions**.
+3. Push to `main` (or run workflow manually).
+4. Your app will be available at:
    - `https://<your-github-username>.github.io/<repo-name>/`
+
