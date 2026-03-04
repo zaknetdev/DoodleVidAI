@@ -5,7 +5,6 @@ import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   CheckCircleIcon,
-  ClockIcon,
   HandRaisedIcon,
   MicrophoneIcon,
   SparklesIcon,
@@ -45,11 +44,6 @@ const App: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecordingNarration, setIsRecordingNarration] = useState(false);
-  const [isNarrationReady, setIsNarrationReady] = useState(false);
-  const [autoGenerateVoice, setAutoGenerateVoice] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
-  const productionTimerRef = useRef<number | null>(null);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
@@ -61,6 +55,8 @@ const App: React.FC = () => {
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
   const handImageRef = useRef<HTMLImageElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
+  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
+  const handImageRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
     const hand = new Image();
@@ -72,18 +68,8 @@ const App: React.FC = () => {
   useEffect(() => {
     return () => {
       if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
-      if (productionTimerRef.current) window.clearInterval(productionTimerRef.current);
     };
   }, []);
-
-
-  useEffect(() => {
-    if (!state.isProcessing || etaSeconds === null) return;
-    setEtaSeconds((prev) => {
-      if (prev === null) return prev;
-      return Math.max(0, prev - 1);
-    });
-  }, [elapsedSeconds, state.isProcessing]);
 
   const activeScene = useMemo(() => {
     if (!state.scenes.length) return null;
@@ -94,16 +80,10 @@ const App: React.FC = () => {
     setState((s) => ({ ...s, steps: s.steps.map((step) => (step.id === id ? { ...step, status } : step)) }));
   };
 
-  const selectMode = (generationMode: GenerationMode) => {
-    setState((s) => ({ ...s, generationMode }));
-    setAutoGenerateVoice(generationMode === 'gemini');
-  };
+  const selectMode = (generationMode: GenerationMode) => setState((s) => ({ ...s, generationMode }));
 
   const handleGenerateScript = async () => {
-    if (!state.topic.trim()) {
-      setState((st) => ({ ...st, message: 'Please enter a topic first.' }));
-      return;
-    }
+    if (!state.topic) return;
     setState((s) => ({ ...s, isGeneratingScript: true }));
     try {
       const script = await generateScript(state.topic, state.generationMode);
@@ -118,26 +98,19 @@ const App: React.FC = () => {
     if (!audioRef.current) return;
     if (audioObjectUrlRef.current?.startsWith('blob:')) URL.revokeObjectURL(audioObjectUrlRef.current);
     audioObjectUrlRef.current = url;
+  const handleNarrationUpload = (file: File | null) => {
+    if (!file || !audioRef.current) return;
+    const url = URL.createObjectURL(file);
     audioRef.current.src = url;
     setState((s) => ({ ...s, audioFile: file }));
   };
 
   const handleNarrationUpload = (file: File | null) => {
     if (!file) return;
-    if (!file.type.startsWith('audio/')) {
-      setState((st) => ({ ...st, message: 'Please upload a valid audio file.' }));
-      return;
-    }
     applyAudioUrl(URL.createObjectURL(file), file);
-    setIsNarrationReady(true);
-    setState((st) => ({ ...st, message: `Narration loaded: ${file.name}` }));
   };
 
   const handleRecordNarration = async () => {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setState((st) => ({ ...st, message: 'This browser does not support direct audio recording. Please upload an MP3/WAV file.' }));
-      return;
-    }
     if (isRecordingNarration) {
       recorderRef.current?.stop();
       setIsRecordingNarration(false);
@@ -146,8 +119,7 @@ const App: React.FC = () => {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const mediaRecorder = new MediaRecorder(stream);
       const chunks: Blob[] = [];
       mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
       mediaRecorder.onstop = () => {
@@ -155,8 +127,7 @@ const App: React.FC = () => {
         const blob = new Blob(chunks, { type: 'audio/webm' });
         const file = new File([blob], `narration-${Date.now()}.webm`, { type: 'audio/webm' });
         applyAudioUrl(URL.createObjectURL(file), file);
-        setIsNarrationReady(true);
-        setState((st) => ({ ...st, message: 'Narration recorded successfully.' }));
+        handleNarrationUpload(file);
       };
       recorderRef.current = mediaRecorder;
       mediaRecorder.start();
@@ -170,16 +141,14 @@ const App: React.FC = () => {
   const loadAudioDuration = async (): Promise<number> => {
     if (!audioRef.current?.src) throw new Error('Narration source is missing. Upload or record a voiceover first.');
     const tempAudio = new Audio(audioRef.current.src);
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       tempAudio.onloadedmetadata = () => resolve();
-      tempAudio.onerror = () => reject(new Error('Could not read narration file metadata. Try another audio file.'));
     });
     return tempAudio.duration || 120;
   };
 
   const buildNarrationIfNeeded = async () => {
     if (audioRef.current?.src) return;
-    if (!autoGenerateVoice) throw new Error('Upload/record narration or enable auto voice generation.');
     const tts = await generateTTS(state.scriptText, state.voiceGender, state.voiceSpeed, state.zakMode, state.generationMode);
     const binary = atob(tts.base64);
     const bytes = new Uint8Array(binary.length);
@@ -208,31 +177,15 @@ const App: React.FC = () => {
   };
 
   const handleStartProduction = async () => {
-    if (!state.scriptText.trim()) {
-      setState((st) => ({ ...st, message: 'Please generate or paste your script first.' }));
-      return;
-    }
-
-    if (state.isProcessing) return;
-
-    if (autoGenerateVoice && state.generationMode !== 'gemini') {
-      setState((st) => ({ ...st, message: 'Auto voice generation requires Gemini mode.' }));
-      return;
-    }
-
-    if (!audioRef.current?.src && !autoGenerateVoice) {
-      setState((st) => ({ ...st, message: 'Upload/record narration or enable auto voice generation before building assets.' }));
-      return;
-    }
-
-    setElapsedSeconds(0);
-    setEtaSeconds(null);
-    if (productionTimerRef.current) window.clearInterval(productionTimerRef.current);
-    productionTimerRef.current = window.setInterval(() => setElapsedSeconds((e) => e + 1), 1000);
-
     setState((s) => ({ ...s, appStage: 'production', isProcessing: true, steps: INITIAL_STEPS, scenes: [], progress: 0 }));
+    if (audioRef.current) {
+      audioRef.current.src = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+    }
+  };
+
+  const handleStartProduction = async () => {
+    setState((s) => ({ ...s, appStage: 'production', isProcessing: true, steps: INITIAL_STEPS, scenes: [] }));
     try {
-      imageCache.current.clear();
       updateStep('script', 'complete');
       updateStep('voice', 'loading');
       await buildNarrationIfNeeded();
@@ -241,8 +194,6 @@ const App: React.FC = () => {
       updateStep('scenes', 'loading');
       const duration = await loadAudioDuration();
       const scenes = await analyzeScript(state.scriptText, duration, state.zakMode, state.generationMode);
-      if (!scenes.length) throw new Error('Could not create scenes from script. Please expand your script and try again.');
-      setEtaSeconds(Math.max(5, Math.round(scenes.length * 1.5)));
       updateStep('scenes', 'complete');
 
       updateStep('visuals', 'loading');
@@ -250,7 +201,8 @@ const App: React.FC = () => {
       let done = 0;
 
       const loadScene = async (scene: typeof scenes[number]) => {
-        const url = await generateImageForScene(scene.prompt, undefined, scene.style, state.generationMode);
+      for (const scene of scenes) {
+        const url = await generateImageForScene(scene.prompt, undefined, scene.style);
         const image = new Image();
         image.crossOrigin = 'anonymous';
         image.src = url;
@@ -262,7 +214,7 @@ const App: React.FC = () => {
         const idx = finalScenes.findIndex((s) => s.id === scene.id);
         finalScenes[idx] = { ...scene, assetUrl: url };
         done += 1;
-        setState((s) => ({ ...s, progress: Math.round((done / Math.max(1, scenes.length)) * 100) }));
+        setState((s) => ({ ...s, progress: Math.round((done / scenes.length) * 100) }));
       };
 
       for (let i = 0; i < scenes.length; i += 4) {
@@ -270,14 +222,9 @@ const App: React.FC = () => {
       }
 
       setState((s) => ({ ...s, scenes: finalScenes, isProcessing: false, message: 'Production ready.' }));
-      setEtaSeconds(0);
-      if (productionTimerRef.current) window.clearInterval(productionTimerRef.current);
-      productionTimerRef.current = null;
       updateStep('visuals', 'complete');
     } catch (error) {
       console.error(error);
-      if (productionTimerRef.current) window.clearInterval(productionTimerRef.current);
-      productionTimerRef.current = null;
       setState((s) => ({ ...s, isProcessing: false, message: error instanceof Error ? error.message : 'Production failed.' }));
     }
   };
@@ -353,40 +300,19 @@ const App: React.FC = () => {
       musicGain.gain.value = 0.14;
       graph.musicSource.connect(musicGain).connect(destination);
 
-      if (!canvasRef.current.captureStream || typeof MediaRecorder === 'undefined') {
-        throw new Error('Video export is not supported in this browser.');
-      }
-
       const stream = new MediaStream([...canvasRef.current.captureStream(60).getTracks(), ...destination.stream.getTracks()]);
-      const preferredMime = 'video/webm;codecs=vp9,opus';
-      const fallbackMime = 'video/webm';
-      const mimeType = MediaRecorder.isTypeSupported(preferredMime) ? preferredMime : fallbackMime;
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
       const chunks: Blob[] = [];
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      let exportInterval: number | null = null;
-
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: mimeType });
+        const blob = new Blob(chunks, { type: 'video/webm' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = `doodlevid-master-${Date.now()}.webm`;
         a.click();
-        if (exportInterval) window.clearInterval(exportInterval);
         stream.getTracks().forEach((t) => t.stop());
-        voiceGain.disconnect();
-        musicGain.disconnect();
         setState((s) => ({ ...s, isRendering: false }));
-      };
-      mediaRecorder.onerror = () => {
-        if (exportInterval) window.clearInterval(exportInterval);
-        stream.getTracks().forEach((t) => t.stop());
-        voiceGain.disconnect();
-        musicGain.disconnect();
-        setState((st) => ({ ...st, isRendering: false, message: 'Export failed due to recorder error.' }));
       };
 
       audioRef.current.currentTime = 0;
@@ -396,9 +322,9 @@ const App: React.FC = () => {
       mediaRecorder.start();
       await Promise.all([audioRef.current.play(), musicRef.current.play()]);
 
-      exportInterval = window.setInterval(() => {
+      const timer = setInterval(() => {
         if (audioRef.current?.ended) {
-          if (exportInterval) window.clearInterval(exportInterval);
+          clearInterval(timer);
           mediaRecorder.stop();
           setIsPlaying(false);
         }
@@ -410,6 +336,52 @@ const App: React.FC = () => {
       console.error(error);
       setState((s) => ({ ...s, isRendering: false, message: 'Export failed. Try again after pressing play once.' }));
     }
+    if (!audioContextRef.current) audioContextRef.current = new AudioContext();
+    const context = audioContextRef.current;
+    if (context.state === 'suspended') await context.resume();
+
+    const destination = context.createMediaStreamDestination();
+    const voiceSource = context.createMediaElementSource(audioRef.current);
+    const voiceGain = context.createGain();
+    voiceGain.gain.value = 1;
+    voiceSource.connect(voiceGain).connect(destination);
+
+    const musicSource = context.createMediaElementSource(musicRef.current);
+    const musicGain = context.createGain();
+    musicGain.gain.value = 0.14;
+    musicSource.connect(musicGain).connect(destination);
+
+    const stream = new MediaStream([...canvasRef.current.captureStream(60).getTracks(), ...destination.stream.getTracks()]);
+    const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus' });
+    const chunks: Blob[] = [];
+
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `doodlevid-master-${Date.now()}.webm`;
+      a.click();
+      setState((s) => ({ ...s, isRendering: false }));
+    };
+
+    audioRef.current.currentTime = 0;
+    musicRef.current.currentTime = 0;
+    setCurrentTime(0);
+    setIsPlaying(true);
+    mediaRecorder.start();
+    await Promise.all([audioRef.current.play(), musicRef.current.play()]);
+
+    const timer = setInterval(() => {
+      if (audioRef.current?.ended) {
+        clearInterval(timer);
+        mediaRecorder.stop();
+        setIsPlaying(false);
+      }
+      if (audioRef.current?.duration) {
+        setState((s) => ({ ...s, renderProgress: Math.round((audioRef.current!.currentTime / audioRef.current!.duration) * 100) }));
+      }
+    }, 200);
   };
 
   const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
@@ -437,30 +409,22 @@ const App: React.FC = () => {
             <textarea className="w-full h-56 bg-slate-950 border border-white/10 rounded-xl p-3 text-sm" value={state.scriptText} onChange={(e) => setState((s) => ({ ...s, scriptText: e.target.value, appStage: 'script' }))} />
 
             <div className="space-y-2 text-sm">
-              <label className="block font-semibold">Voiceover source</label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={autoGenerateVoice} onChange={(e) => setAutoGenerateVoice(e.target.checked)} disabled={state.generationMode !== 'gemini'} />
-                <span>Auto-generate voice with Google TTS (Gemini mode)</span>
-              </label>
-              <label className="block">Or upload your own MP3/WAV</label>
-              <input type="file" accept="audio/*,.mp3,.wav,.m4a,.webm" onChange={(e) => handleNarrationUpload(e.target.files?.[0] ?? null)} />
+              <label className="block">Narration upload (free)</label>
+              <input type="file" accept="audio/*" onChange={(e) => handleNarrationUpload(e.target.files?.[0] ?? null)} />
               <button onClick={handleRecordNarration} className="rounded-xl p-2 border border-white/10 w-full flex justify-center gap-2">
                 <MicrophoneIcon className="w-5 h-5" /> {isRecordingNarration ? 'Stop recording' : 'Record narration'}
               </button>
             </div>
 
-            <button onClick={handleStartProduction} disabled={!state.scriptText || state.isProcessing || (!isNarrationReady && !(autoGenerateVoice && state.generationMode === 'gemini'))} className="w-full rounded-xl p-3 bg-emerald-600 font-bold disabled:opacity-40">Build full video assets</button>
-            <p className="text-xs text-amber-300">Google image generation uses Gemini image model. Whisk currently does not expose a public API key flow; this app uses the closest free Google programmable path.</p>
+            <button onClick={handleStartProduction} disabled={!state.scriptText || state.isProcessing} className="w-full rounded-xl p-3 bg-emerald-600 font-bold disabled:opacity-40">Build video assets</button>
+            <p className="text-xs text-amber-300">Free mode is fully no-key: local script/scene generation, local SVG whiteboard visuals, and your narration upload/record.</p>
+            <p className="text-xs text-amber-300">Free mode uses open image generation + local scene planning. For auto TTS/script quality boost, switch to Gemini mode and add API key.</p>
             <p className="text-xs text-slate-400">{state.message}</p>
           </section>
 
           <section className="lg:col-span-8 space-y-4">
             <div className="aspect-video border border-white/10 rounded-2xl overflow-hidden bg-white relative">
               <canvas ref={canvasRef} width={1280} height={720} className="w-full h-full" onClick={() => {
-                if (!audioRef.current?.src) {
-                  setState((st) => ({ ...st, message: 'Please upload/record narration or enable auto voice first.' }));
-                  return;
-                }
                 if (isPlaying) {
                   audioRef.current?.pause();
                   musicRef.current?.pause();
@@ -482,14 +446,8 @@ const App: React.FC = () => {
                 </button>
               </div>
               {state.isProcessing && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-slate-300">
-                    <span className="flex items-center gap-1"><ClockIcon className="w-4 h-4" /> Elapsed: {formatTime(elapsedSeconds)}</span>
-                    <span>ETA: {etaSeconds === null ? '--:--' : formatTime(etaSeconds)}</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-                    <div className="h-full bg-teal-500 transition-all" style={{ width: `${state.progress}%` }} />
-                  </div>
+                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div className="h-full bg-teal-500 transition-all" style={{ width: `${state.progress}%` }} />
                 </div>
               )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">

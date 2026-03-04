@@ -66,16 +66,12 @@ const buildLocalWhiteboardSvg = (scenePrompt: string, style: VisualStyle) => {
 
 export async function generateScript(topic: string, mode: GenerationMode = 'free'): Promise<string> {
   if (mode === 'gemini' && hasGeminiKey()) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `Act as a Master Storyteller and Educator. Generate a deep, engaging video script about: "${topic}".
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Act as a Master Storyteller and Educator. Generate a deep, engaging video script about: "${topic}".
 LENGTH REQUIREMENT: 1200-2200 words.
 Use simple language with clear sections: hook, overview, core lessons, story, framework, action plan, recap and CTA.`;
-      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-      if (response.text?.trim()) return response.text;
-    } catch (error) {
-      console.warn('Gemini script generation failed, using local fallback.', error);
-    }
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    return response.text;
   }
 
   return [
@@ -90,48 +86,51 @@ Use simple language with clear sections: hook, overview, core lessons, story, fr
     '\nAction Plan: Choose one action for 24 hours, one for 7 days, and one for 30 days.',
     '\nRecap: You learned what matters, what to avoid, and what to do next.',
     '\nCTA: If this helped, share your 24-hour action step and key takeaway.',
+    '\nOverview: In this video, we will break the topic into plain language, simple examples, and practical actions.',
+    '\nCore Lesson 1: Define the idea clearly and remove jargon.',
+    `Think of ${topic} like a system with inputs, habits, and outcomes. When one piece changes, the result changes.`,
+    '\nCore Lesson 2: Spot common mistakes and hidden assumptions.',
+    '\nStory: Meet a person who struggled, changed one behavior, then compounded results over 90 days.',
+    '\nFramework: Use this 3-step loop: Observe -> Simplify -> Execute.',
+    '\nAction Plan: Pick one action to do in 24 hours, one in 7 days, and one in 30 days.',
+    '\nRecap: You learned what matters, what to avoid, and exactly what to do next.',
+    '\nCTA: If this helped, comment your key takeaway and share your 24-hour action.',
   ].join('\n\n');
 }
 
 export async function analyzeScript(script: string, duration?: number, zakMode = true, mode: GenerationMode = 'free'): Promise<Scene[]> {
   if (mode === 'gemini' && hasGeminiKey()) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `Segment this script for a whiteboard video. Total duration ${duration ?? estimateDurationSeconds(script)} sec.\nReturn JSON scene array with text,startTime,endTime,keyword,animationType,prompt,focalPoint.`;
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt + `\nScript:\n${script}`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                text: { type: Type.STRING },
-                startTime: { type: Type.NUMBER },
-                endTime: { type: Type.NUMBER },
-                keyword: { type: Type.STRING },
-                animationType: { type: Type.STRING },
-                prompt: { type: Type.STRING },
-                focalPoint: {
-                  type: Type.OBJECT,
-                  properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } },
-                  required: ['x', 'y'],
-                },
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const prompt = `Segment this script for a whiteboard video. Total duration ${duration ?? estimateDurationSeconds(script)} sec.\nReturn JSON scene array with text,startTime,endTime,keyword,animationType,prompt,focalPoint.`;
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt + `\nScript:\n${script}`,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              text: { type: Type.STRING },
+              startTime: { type: Type.NUMBER },
+              endTime: { type: Type.NUMBER },
+              keyword: { type: Type.STRING },
+              animationType: { type: Type.STRING },
+              prompt: { type: Type.STRING },
+              focalPoint: {
+                type: Type.OBJECT,
+                properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } },
+                required: ['x', 'y'],
               },
-              required: ['text', 'startTime', 'endTime', 'keyword', 'prompt', 'animationType', 'focalPoint'],
             },
+            required: ['text', 'startTime', 'endTime', 'keyword', 'prompt', 'animationType', 'focalPoint'],
           },
         },
-      });
-      const rawScenes = JSON.parse(response.text);
-      if (Array.isArray(rawScenes) && rawScenes.length) {
-        return rawScenes.map((sc: Scene, i: number) => ({ ...sc, id: `scene-${i}`, style: zakMode ? 'zak-invest' : 'blueprint-curator' }));
-      }
-    } catch (error) {
-      console.warn('Gemini scene analysis failed, using local fallback.', error);
-    }
+      },
+    });
+    const rawScenes = JSON.parse(response.text);
+    return rawScenes.map((s: Scene, i: number) => ({ ...s, id: `scene-${i}`, style: zakMode ? 'zak-invest' : 'blueprint-curator' }));
   }
 
   const lines = splitSentences(script);
@@ -139,6 +138,7 @@ export async function analyzeScript(script: string, duration?: number, zakMode =
   const chunks: string[] = [];
   for (let i = 0; i < lines.length; i += 2) chunks.push(lines.slice(i, i + 2).join(' '));
   const safeChunks = (chunks.length ? chunks : [script]).slice(0, 60);
+  const safeChunks = chunks.length ? chunks : [script];
   const sceneDuration = Math.max(4, totalDuration / safeChunks.length);
 
   return safeChunks.map((text, i) => {
@@ -182,34 +182,17 @@ export async function generateTTS(
   throw new Error('Free mode does not use paid TTS APIs. Please record or upload narration in the UI.');
 }
 
-export async function generateImageForScene(
-  scenePrompt: string,
-  _characterImageBase64?: string,
-  style: VisualStyle = 'zak-invest',
-  mode: GenerationMode = 'free',
-): Promise<string> {
-  if (mode === 'gemini' && hasGeminiKey()) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const styleHint =
-      style === 'zak-invest'
-        ? 'professional whiteboard drawing on clean white background with teal accent, no text'
-        : 'minimal blueprint style illustration on clean white background, no text';
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-preview-image-generation',
-      contents: `Create a single 16:9 scene image for this narration: ${scenePrompt}. Style: ${styleHint}.`,
-      config: { responseModalities: [Modality.TEXT, Modality.IMAGE] },
-    });
-
-    const parts = response.candidates?.[0]?.content?.parts ?? [];
-    for (const part of parts) {
-      if ((part as { inlineData?: { data?: string; mimeType?: string } }).inlineData?.data) {
-        const data = (part as { inlineData: { data: string; mimeType?: string } }).inlineData.data;
-        return `data:image/png;base64,${data}`;
-      }
-    }
-  }
-
+export async function generateImageForScene(scenePrompt: string, _characterImageBase64?: string, style: VisualStyle = 'zak-invest'): Promise<string> {
   const svg = buildLocalWhiteboardSvg(scenePrompt, style);
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  throw new Error('Free mode does not use paid TTS APIs. Please record/upload narration in the UI.');
+}
+
+export async function generateImageForScene(scenePrompt: string, _characterImageBase64?: string, style: VisualStyle = 'zak-invest'): Promise<string> {
+  const styleHint =
+    style === 'zak-invest'
+      ? 'professional whiteboard marker drawing, plain white background, clean line art, teal hoodie character, no text'
+      : 'minimal technical blueprint illustration, no text, high contrast';
+
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(`${scenePrompt}, ${styleHint}`)}?width=1280&height=720&nologo=true`;
 }
